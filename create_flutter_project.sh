@@ -4,13 +4,11 @@ set -euo pipefail
 DEFAULT_ORG="com.universales"
 DEFAULT_PLATFORMS="android,ios"
 VALID_PLATFORMS=(android ios linux macos windows)
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_LOCAL_DIR="$SCRIPT_DIR/example/lib"
-TEMPLATE_ARCHIVE_URL="${TEMPLATE_ARCHIVE_URL:-}"
+TEMPLATE_ARCHIVE_URL="https://github.com/AaronMG-Universales/flutter-generate/releases/download/v1.0.0/flutter_template_v1.0.0.zip"
 TEMP_TEMPLATE_DIR=""
 TEMPLATE_SOURCE=""
-
 error() {
   echo "Error: $1" >&2
 }
@@ -89,6 +87,85 @@ ask_yes_no() {
   done
 }
 
+select_platforms() {
+  local choices=( "${VALID_PLATFORMS[@]}" )
+  local flags=()
+  for plat in "${choices[@]}"; do
+    if [[ "$plat" == "android" || "$plat" == "ios" ]]; then
+      flags+=(1)
+    else
+      flags+=(0)
+    fi
+  done
+
+  while true; do
+    echo
+    echo "Selecciona las plataformas a incluir:"
+    local idx=0
+    for plat in "${choices[@]}"; do
+      local mark=" "
+      if [[ "${flags[$idx]}" -eq 1 ]]; then
+        mark="x"
+      fi
+      printf "  %d) [%s] %s\n" "$((idx + 1))" "$mark" "$plat"
+      idx=$((idx + 1))
+    done
+
+    local current_selection=()
+    for i in "${!choices[@]}"; do
+      if [[ "${flags[$i]}" -eq 1 ]]; then
+        current_selection+=("${choices[$i]}")
+      fi
+    done
+
+    if ((${#current_selection[@]} > 0)); then
+      printf "Actual: %s\n" "$(IFS=','; echo "${current_selection[*]}")"
+    else
+      echo "Actual: (ninguna)"
+    fi
+
+    echo "Presiona ENTER para continuar con la selección actual."
+    echo "Escribe números (por ejemplo \"3\" o \"2 5\") para alternar plataformas."
+    local input=""
+    read -r -p "> " input || input=""
+    input="$(trim "$input")"
+    if [[ -z "$input" ]]; then
+      PLATFORMS=("${current_selection[@]}")
+      if ((${#PLATFORMS[@]} > 0)); then
+        PLATFORM_STRING="$(IFS=','; echo "${PLATFORMS[*]}")"
+        break
+      fi
+      echo "Debes seleccionar al menos una plataforma."
+      continue
+    fi
+
+    IFS=' ,;:' read -r -a tokens <<< "$input"
+    local valid_selection=1
+    for token in "${tokens[@]}"; do
+      [[ -z "$token" ]] && continue
+      if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+        echo "Ingresa solo números válidos."
+        valid_selection=0
+        break
+      fi
+      local index=$((token - 1))
+      if (( index < 0 || index >= ${#choices[@]} )); then
+        echo "Número fuera de rango: $token"
+        valid_selection=0
+        break
+      fi
+      if [[ "${flags[$index]}" -eq 1 ]]; then
+        flags[$index]=0
+      else
+        flags[$index]=1
+      fi
+    done
+    if (( ! valid_selection )); then
+      continue
+    fi
+  done
+}
+
 append_block_if_missing() {
   local file="$1"
   local marker="$2"
@@ -105,11 +182,12 @@ prepare_template() {
   fi
 
   if [[ -z "$TEMPLATE_ARCHIVE_URL" ]]; then
-    error "No se encontró la plantilla local en '$TEMPLATE_LOCAL_DIR'. Define TEMPLATE_ARCHIVE_URL apuntando a un ZIP con la carpeta lib/."
+    error "No se encontró la plantilla local en '$TEMPLATE_LOCAL_DIR' y no se definió TEMPLATE_ARCHIVE_URL."
     exit 1
   fi
 
   TEMP_TEMPLATE_DIR="$(mktemp -d)"
+  echo "Descargando plantilla desde: $TEMPLATE_ARCHIVE_URL"
 
   python3 - "$TEMPLATE_ARCHIVE_URL" "$TEMP_TEMPLATE_DIR" <<'PY'
 import io
@@ -180,35 +258,9 @@ while true; do
 done
 
 # Plataformas
-PLATFORM_INPUT=""
 PLATFORMS=()
 PLATFORM_STRING=""
-while true; do
-  read -r -p "Plataformas (android,ios,linux,macos,windows) [$DEFAULT_PLATFORMS]: " PLATFORM_INPUT || PLATFORM_INPUT=""
-  PLATFORM_INPUT="$(trim "${PLATFORM_INPUT:-$DEFAULT_PLATFORMS}")"
-  PLATFORM_INPUT="$(echo "$PLATFORM_INPUT" | tr '[:upper:]' '[:lower:]')"
-  PLATFORM_INPUT="${PLATFORM_INPUT// /}"
-
-  IFS=',' read -r -a RAW_PLATFORMS <<< "$PLATFORM_INPUT"
-  PLATFORMS=()
-  for plat in "${RAW_PLATFORMS[@]}"; do
-    [[ -z "$plat" ]] && continue
-    if ! contains "$plat" "${VALID_PLATFORMS[@]}"; then
-      echo "Plataforma desconocida: $plat"
-      PLATFORMS=()
-      break
-    fi
-    if ! contains "$plat" "${PLATFORMS[@]}"; then
-      PLATFORMS+=("$plat")
-    fi
-  done
-
-  if ((${#PLATFORMS[@]} > 0)); then
-    PLATFORM_STRING="$(IFS=','; echo "${PLATFORMS[*]}")"
-    break
-  fi
-  echo "Debes indicar al menos una plataforma válida."
-done
+select_platforms
 
 # Gestión de estado
 USE_PROVIDER="n"
@@ -315,11 +367,82 @@ flutter_pub_add --dev flutter_lints
 
 PUBSPEC_PATH="$PROJECT_DIR/pubspec.yaml"
 
-append_block_if_missing "$PUBSPEC_PATH" "flutter_launcher_icons:" "flutter_launcher_icons:\n  android: true\n  ios: true\n  image_path: 'assets/icons/ic_main.png'\n  remove_alpha_ios: true\n  adaptative_icon_bakcground: #003364"
+append_block_if_missing "$PUBSPEC_PATH" "flutter_launcher_icons:" $'flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: \'assets/icons/ic_main.png\'
+  remove_alpha_ios: true
+  adaptative_icon_bakcground: #003364'
+python3 - "$PUBSPEC_PATH" <<'PY'
+import sys
+from pathlib import Path
 
-append_block_if_missing "$PUBSPEC_PATH" "#  assets:" "#  assets:\n#    - assets/images/\n#    - assets/icons/"
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines()
 
-append_block_if_missing "$PUBSPEC_PATH" "#  fonts:" "#  fonts:\n#      - family: Akzidenz\n#        fonts:\n#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Black.ttf\n#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Bold.ttf\n#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Light_Italic.ttf\n#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Light.ttf\n#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Roman.ttf\n#      - family: Berthold_Condensed\n#        fonts:\n#            - asset: assets/fonts/Berthold_Condensed/Berthold_Condensed.otf\n#      - family: Century\n#        fonts:\n#            - asset: assets/fonts/Century/centurygothic_bold.ttf\n#            - asset: assets/fonts/Century/centurygothic.ttf"
+flutter_block = [
+    'flutter:',
+    '',
+    '  uses-material-design: true',
+    '#  assets:',
+    '#    - assets/images/',
+    '#    - assets/icons/',
+    '#  fonts:',
+    '#      - family: Akzidenz',
+    '#        fonts:',
+    '#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Black.ttf',
+    '#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Bold.ttf',
+    '#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Light_Italic.ttf',
+    '#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Light.ttf',
+    '#            - asset: assets/fonts/Akzidenz/Akzidenz_Grotesk_Roman.ttf',
+    '#      - family: Berthold_Condensed',
+    '#        fonts:',
+    '#            - asset: assets/fonts/Berthold_Condensed/Berthold_Condensed.otf',
+    '#      - family: Century',
+    '#        fonts:',
+    '#            - asset: assets/fonts/Century/centurygothic_bold.ttf',
+    '#            - asset: assets/fonts/Century/centurygothic.ttf',
+]
+output = []
+i = 0
+flutter_found = False
+while i < len(lines):
+    line = lines[i]
+    stripped = line.lstrip()
+    if stripped.startswith('#'):
+        i += 1
+        continue
+    if line.startswith('flutter:'):
+        flutter_found = True
+        if output and output[-1] != '':
+            output.append('')
+        output.extend(flutter_block)
+        i += 1
+        while i < len(lines):
+            nxt = lines[i]
+            if nxt.strip() == '':
+                i += 1
+                continue
+            if nxt.startswith(' '):
+                i += 1
+                continue
+            break
+        if output and output[-1] != '':
+            output.append('')
+        continue
+    if line.strip() == '' and (not output or output[-1] == ''):
+        i += 1
+        continue
+    output.append(line)
+    i += 1
+
+if not flutter_found:
+    if output and output[-1] != '':
+        output.append('')
+    output.extend(flutter_block)
+
+path.write_text('\n'.join(output).rstrip() + '\n')
+PY
 
 mkdir -p "$PROJECT_DIR/assets/icons" "$PROJECT_DIR/assets/images"
 
