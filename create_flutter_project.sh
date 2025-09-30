@@ -5,7 +5,13 @@ DEFAULT_ORG="com.universales"
 DEFAULT_PLATFORMS="android,ios"
 VALID_PLATFORMS=(android ios linux macos windows)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATE_LOCAL_DIR="$SCRIPT_DIR/example/lib"
+WORKING_DIR="$(pwd)"
+
+if [[ -d "$WORKING_DIR/example/lib" ]]; then
+  TEMPLATE_LOCAL_DIR="$WORKING_DIR/example/lib"
+else
+  TEMPLATE_LOCAL_DIR="$SCRIPT_DIR/example/lib"
+fi
 TEMPLATE_ARCHIVE_URL="https://github.com/AaronMG-Universales/flutter-generate/releases/download/v1.0.0/flutter_template_v1.0.0.zip"
 TEMP_TEMPLATE_DIR=""
 TEMPLATE_SOURCE=""
@@ -274,7 +280,7 @@ if [[ "$(ask_yes_no "¿Agregar Bloc?" "n")" == "y" ]]; then
   USE_BLOC="y"
 fi
 
-PROJECT_DIR="$SCRIPT_DIR/$PROJECT_NAME"
+PROJECT_DIR="$WORKING_DIR/$PROJECT_NAME"
 
 if [[ -d "$PROJECT_DIR" ]]; then
   error "La carpeta '$PROJECT_DIR' ya existe. Elimina o usa otro nombre."
